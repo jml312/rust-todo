@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, Result};
 
 use std::env;
 use std::fs::File;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
@@ -88,7 +88,7 @@ fn main() -> Result<()> {
             let file_path: &str = sub_matches
                 .get_one::<String>("file_path")
                 .expect("File path is required");
-            load_tasks(&conn, &file_path)?;
+            load_tasks(&conn, &file_path, true)?;
         }
         Some(("list", _)) => {
             list_tasks(&conn)?;
@@ -151,10 +151,10 @@ fn add_task(conn: &Connection, name: &str, print: bool) -> Result<()> {
     Ok(())
 }
 
-fn load_tasks(conn: &Connection, file_path: &str) -> Result<()> {
+fn load_tasks(conn: &Connection, file_path: &str, print: bool) -> Result<()> {
     let current_directory: PathBuf = env::current_dir().unwrap();
 
-    let full_path: PathBuf = current_directory.parent().unwrap().join(file_path);
+    let full_path: PathBuf = current_directory.join(file_path);
 
     if !full_path.exists() {
         eprintln!("The file '{}' does not exist.", file_path);
@@ -177,7 +177,11 @@ fn load_tasks(conn: &Connection, file_path: &str) -> Result<()> {
         }
     }
 
-    list_tasks(&conn)?;
+    if print {
+        println!("Tasks loaded from '{}'", file_path);
+        list_tasks(&conn)?;
+    }
+
     Ok(())
 }
 
@@ -280,4 +284,119 @@ fn clear_tasks(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM tasks", [])?;
     println!("All tasks cleared");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                is_done BOOLEAN NOT NULL default 0
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (name, is_done) VALUES (?1, ?2)",
+            params!["task1", false],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (name, is_done) VALUES (?1, ?2)",
+            params!["task2", true],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_add_task() {
+        let conn = setup_db();
+        add_task(&conn, "task3", false).unwrap();
+        let task = get_task_by_name(&conn, "task3").unwrap();
+        assert_eq!(task.name, "task3");
+        assert_eq!(task.is_done, false);
+    }
+
+    #[test]
+    fn test_load_tasks() {
+        let file_path = "tasks.txt";
+        let mut file: File = File::create(file_path).unwrap();
+        file.write_all(b"task4\ntask5\ntask6").unwrap();
+
+        let conn = setup_db();
+        load_tasks(&conn, file_path, false).unwrap();
+        let tasks = get_all_tasks(&conn);
+
+        println!("{:?}", tasks);
+
+        assert_eq!(tasks.len(), 5);
+
+        std::fs::remove_file(file_path).unwrap();
+    }
+
+    #[test]
+    fn test_list_tasks() {
+        let conn = setup_db();
+        list_tasks(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_toggle_task() {
+        let conn = setup_db();
+        toggle_task(&conn, &1).unwrap();
+        let task = get_task_by_id(&conn, &1).unwrap();
+        assert_eq!(task.is_done, true);
+    }
+
+    #[test]
+    fn test_toggle_all_tasks() {
+        let conn = setup_db();
+        toggle_all_tasks(&conn).unwrap();
+        let tasks = get_all_tasks(&conn);
+        assert_eq!(tasks.iter().all(|task| task.is_done), true);
+    }
+
+    #[test]
+    fn test_clean_tasks() {
+        let conn = setup_db();
+        clean_tasks(&conn).unwrap();
+        let tasks = get_all_tasks(&conn);
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_reset_tasks() {
+        let conn = setup_db();
+        toggle_task(&conn, &1).unwrap();
+        reset_tasks(&conn).unwrap();
+        let tasks = get_all_tasks(&conn);
+        assert_eq!(tasks.iter().all(|task| task.is_done), false);
+    }
+
+    #[test]
+    fn test_delete_task() {
+        let conn = setup_db();
+        delete_task(&conn, &1).unwrap();
+        let tasks = get_all_tasks(&conn);
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_clear_tasks() {
+        let conn = setup_db();
+        clear_tasks(&conn).unwrap();
+        let tasks = get_all_tasks(&conn);
+        assert_eq!(tasks.len(), 0);
+    }
+
+    #[test]
+    fn test_main() {
+        main().unwrap();
+    }
 }

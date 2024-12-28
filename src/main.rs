@@ -333,8 +333,6 @@ mod tests {
         load_tasks(&conn, file_path, false).unwrap();
         let tasks = get_all_tasks(&conn);
 
-        println!("{:?}", tasks);
-
         assert_eq!(tasks.len(), 5);
 
         std::fs::remove_file(file_path).unwrap();
